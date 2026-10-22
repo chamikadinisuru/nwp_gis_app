@@ -1,0 +1,37 @@
+name: nwp_gis_app
+description: "NWP GIS Mobile Pro - Road Network + Tracking"
+publish_to: 'none'
+
+version: 1.0.1+2
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_map: ^8.3.1
+  latlong2: ^0.10.1
+  proj4dart: ^3.0.0
+  geolocator: ^13.0.2
+  turf: ^0.0.12
+  path_provider: ^2.1.6
+  shared_preferences: ^2.5.5
+  file_picker: ^8.0.0
+  xml: ^6.3.0
+  archive: ^4.0.9
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/GIS_LOGO.jpg
+    - assets/geojson/Road_simplified.geojson
+    - assets/geojson/boundary.geojson
