@@ -852,7 +852,9 @@ class _MainMapScreenState extends State<MainMapScreen> {
       'EPSG:5235',
       '+proj=tmerc +lat_0=7.00047152777778 +lon_0=80.7717130833333 +k=0.9999238418 +x_0=500000 +y_0=500000 +ellps=evrst30 +towgs84=-0.293,766.95,87.713,0.195704,1.695068,3.473016,-0.039338 +units=m +no_defs',
     );
-    _determinePosition(moveCamera: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _determinePosition(moveCamera: true);
+    });
     _loadSavedTracksFromStorage();
     _loadLanguagePref();
     _loadDevOptionsPref();
@@ -1284,13 +1286,88 @@ class _MainMapScreenState extends State<MainMapScreen> {
   }
 
   // --- GPS LOGIC & SATELLITE ESTIMATION ---
+  void _showPermissionDeniedDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.location_off, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Location අවසරය අවශ්‍යයි'),
+          ],
+        ),
+        content: const Text(
+          'ඇප් එකට ඔබගේ වත්මන් ස්ථානය (GPS) ලබාගැනීමට Settings වෙතින් Location permission ("While Using the App") ලබා දිය යුතුය.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('පසුවට'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.settings),
+            label: const Text('Settings විවෘත කරන්න'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Geolocator.openAppSettings();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLocationServiceDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.gps_off, color: Colors.red),
+            SizedBox(width: 8),
+            Text('GPS ක්‍රියාවිරහිතයි'),
+          ],
+        ),
+        content: const Text(
+          'ඔබගේ දුරකථනයේ GPS / Location Services ක්‍රියාවිරහිත කර ඇත. කරුණාකර එය සක්‍රීය කරන්න.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('පසුවට'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.location_on),
+            label: const Text('GPS Settings විවෘත කරන්න'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Geolocator.openLocationSettings();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<Position?> _determinePosition({bool moveCamera = false}) async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        _showToast('GPS එක Off කර ඇත. කරුණාකර GPS on කරන්න.');
+        _showLocationServiceDialog();
         return null;
       }
+
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -1299,37 +1376,73 @@ class _MainMapScreenState extends State<MainMapScreen> {
           return null;
         }
       }
+
       if (permission == LocationPermission.deniedForever) {
-        _showToast(
-          'Location අවසරය ස්ථිරවම ප්‍රතික්ෂේප කර ඇත. Settings වෙතින් සක්‍රීය කරන්න.',
-        );
+        _showPermissionDeniedDialog();
         return null;
       }
 
-      // Explicit best-possible accuracy settings (GNSS/GPS chip's highest
-      // precision mode) instead of relying on the platform default, which
-      // is not guaranteed to be the most accurate setting available. A
-      // timeout guards against hanging forever with a weak/no GPS signal
-      // (e.g. indoors), so the app stays responsive instead of freezing.
-      const LocationSettings highAccuracySettings = LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
-      );
-      Position position =
-          await Geolocator.getCurrentPosition(
-            locationSettings: highAccuracySettings,
-          ).timeout(
-            const Duration(seconds: 20),
-            onTimeout: () => throw TimeoutException('GPS fix timed out'),
-          );
-      _updateGpsStats(position);
-      setState(() {
-        _currentLocation = LatLng(position.latitude, position.longitude);
-        if (moveCamera) {
-          _mapController.move(_currentLocation!, 15.0);
+      // 1. Instant response: Show last known location immediately if available
+      Position? lastKnown;
+      try {
+        lastKnown = await Geolocator.getLastKnownPosition();
+      } catch (_) {}
+
+      if (lastKnown != null && mounted) {
+        _updateGpsStats(lastKnown);
+        setState(() {
+          _currentLocation = LatLng(lastKnown!.latitude, lastKnown!.longitude);
+          if (moveCamera) {
+            _mapController.move(_currentLocation!, 15.0);
+          }
+        });
+      }
+
+      // 2. Fetch fresh live GPS fix with fallback
+      final LocationSettings locationSettings = (!kIsWeb && Platform.isIOS)
+          ? AppleSettings(
+              accuracy: LocationAccuracy.best,
+              distanceFilter: 0,
+              activityType: ActivityType.otherNavigation,
+            )
+          : const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 0,
+            );
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: locationSettings,
+        ).timeout(const Duration(seconds: 10));
+      } catch (_) {
+        // Fallback to medium accuracy if highest accuracy fix takes too long (e.g. indoors)
+        try {
+          position = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              distanceFilter: 0,
+            ),
+          ).timeout(const Duration(seconds: 6));
+        } catch (_) {
+          if (lastKnown != null) {
+            return lastKnown;
+          }
+          throw TimeoutException('GPS fix timed out');
         }
-      });
-      return position;
+      }
+
+      if (position != null && mounted) {
+        _updateGpsStats(position);
+        setState(() {
+          _currentLocation = LatLng(position!.latitude, position!.longitude);
+          if (moveCamera) {
+            _mapController.move(_currentLocation!, 15.0);
+          }
+        });
+        return position;
+      }
+      return lastKnown;
     } on TimeoutException {
       _showToast(
         'GPS Signal එක ලබාගැනීමට වැඩි කාලයක් ගතවේ. විවෘත ප්‍රදේශයකට ගොස් නැවත උත්සාහ කරන්න.',
