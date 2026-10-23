@@ -1401,9 +1401,10 @@ class _MainMapScreenState extends State<MainMapScreen> {
       // 2. Fetch fresh live GPS fix with fallback
       final LocationSettings locationSettings = (!kIsWeb && Platform.isIOS)
           ? AppleSettings(
-              accuracy: LocationAccuracy.best,
+              accuracy: LocationAccuracy.high,
               distanceFilter: 0,
-              activityType: ActivityType.otherNavigation,
+              activityType: ActivityType.other,
+              pauseLocationUpdatesAutomatically: false,
             )
           : const LocationSettings(
               accuracy: LocationAccuracy.high,
@@ -1414,16 +1415,16 @@ class _MainMapScreenState extends State<MainMapScreen> {
       try {
         position = await Geolocator.getCurrentPosition(
           locationSettings: locationSettings,
-        ).timeout(const Duration(seconds: 10));
+        ).timeout(const Duration(seconds: 8));
       } catch (_) {
-        // Fallback to medium accuracy if highest accuracy fix takes too long (e.g. indoors)
+        // Fallback to medium accuracy if high accuracy fix takes too long (e.g. indoors)
         try {
           position = await Geolocator.getCurrentPosition(
             locationSettings: const LocationSettings(
               accuracy: LocationAccuracy.medium,
               distanceFilter: 0,
             ),
-          ).timeout(const Duration(seconds: 6));
+          ).timeout(const Duration(seconds: 5));
         } catch (_) {
           if (lastKnown != null) {
             return lastKnown;
@@ -1795,7 +1796,7 @@ class _MainMapScreenState extends State<MainMapScreen> {
     if (Platform.isIOS) {
       return AppleSettings(
         accuracy: LocationAccuracy.bestForNavigation,
-        activityType: ActivityType.otherNavigation,
+        activityType: ActivityType.other,
         distanceFilter: distanceFilter,
         pauseLocationUpdatesAutomatically: false,
         showBackgroundLocationIndicator: true,
